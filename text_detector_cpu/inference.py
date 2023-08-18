@@ -3,11 +3,11 @@ import numpy as np
 from openvino.inference_engine import IECore
 class TextDetector:
     
-    def __init__(self) -> None:
+    def __init__(self, model_path="", weight_path="") -> None:
         ie = IECore()
         self.network = ie.read_network(
-            model="models/horizontal-text-detection-0001.xml",
-            weights="models/horizontal-text-detection-0001.bin",
+            model=model_path,
+            weights=weight_path,
         )
         self.execution_net = ie.load_network(self.network, "CPU")
         
@@ -85,11 +85,11 @@ class TextDetector:
         points = points.astype(int)
 
         warped, warped_rect = warp(points, original_image)
-        cv2.imshow("warped", warped)
-        cv2.imshow("original", original_image)
-        cv2.imshow("resize", resized_image)
-        cv2.waitKey(0)
-        return
+        # cv2.imshow("warped", warped)
+        # cv2.imshow("original", original_image)
+        # cv2.imshow("resize", resized_image)
+        # cv2.waitKey(0)
+        # return
         # exit()
         
         for box in predictions:
@@ -108,6 +108,7 @@ class TextDetector:
                 cv2.FONT_HERSHEY_SIMPLEX, 1, self.colors["red"], 1, cv2.LINE_AA)
         
         cv2.imwrite(res_folder + im_name, original_image)
+        cv2.imwrite(res_folder + "warped_" + im_name, warped)
 
     def test_frame(self, img, threshold=0.5):
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -139,6 +140,7 @@ class TextDetector:
         im_name = image_path.split('/')[-1]
         # reading image
         img = cv2.imread(image_path)
+        img = img[1600:2600, 400:1900]
         # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         
         # extracting model inputs: batch_size = 1, num_channels = 3 (RGB), height = 704, width = 704
@@ -316,7 +318,11 @@ def warp(text_boxes, image, new_width=1000, new_height=600, b_padding=0, debug=F
     
     
 if __name__ == "__main__":
-    obj = TextDetector()
+    weight_path = "models/horizontal-text-detection-0001.bin"
+    model_path = "models/horizontal-text-detection-0001.xml"
+    # weight_path = "intel/text-detection-0003/FP32/text-detection-0003.bin"
+    # model_path = "intel/text-detection-0003/FP32/text-detection-0003.xml"
+    obj = TextDetector(model_path, weight_path)
     threshold = 0.5
     
     import time
@@ -335,7 +341,16 @@ if __name__ == "__main__":
     # test = "adjusted.jpg"
     # print(obj.test(test, threshold))
 
-    test = "received.jpg"
+    test = "IMG_1411.jpg"
     print(obj.test(test, threshold))
+
+    # test = "/Users/sith007/Documents/id/jpg/IMG_1375.jpg"
+    # print(obj.test(test, threshold))
+
+    # test = "/Users/sith007/Documents/id/imglab/USER_SCOPED_TEMP_DATA_MSGR_PHOTO_FOR_UPLOAD_1573620610969.jpg"
+    # print(obj.test(test, threshold))
+
+    # test = "/Users/sith007/Documents/id/imglab/scaled_IMG_4257.JPG"
+    # print(obj.test(test, threshold))
     print(time.time() - t1)
         
