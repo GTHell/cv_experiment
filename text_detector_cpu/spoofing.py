@@ -120,20 +120,30 @@ class FaceDetector:
             cv2.putText(frame, str(round(detection[1], 2)), (left, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
         return frame
-    
-if __name__ == "__main__":
-    weight_bin = "intel/face-detection-adas-0001/FP32/face-detection-adas-0001.bin"
-    model_xml = "intel/face-detection-adas-0001/FP32/face-detection-adas-0001.xml"
 
-    img = cv2.imread("/Users/sith007/Downloads/bro_hok_2.jpeg")
+if __name__ == "__main__":
+
+    # Init the detector
+    weight_bin = "intel/face-detection-adas-0001/FP16/face-detection-adas-0001.bin"
+    model_xml = "intel/face-detection-adas-0001/FP16/face-detection-adas-0001.xml"
+
     detector = FaceDetector(model_xml, weight_bin)
+    weight_bin = "models/MN3_antispoof.bin"
+    model_xml = "models/MN3_antispoof.xml"
+    spoof_detector = SpoofDetector(model_xml, weight_bin)
+
+    # test
+    # img = cv2.imread("/Users/sith007/Downloads/bro_hok_2.jpeg")
+    img = cv2.imread("/Users/sith007/Downloads/right-me.jpg")
+    img = cv2.imread("IMG_1411.jpg")
+
+    # Apply median blur to the image to remove noise
+    img = cv2.medianBlur(img, 9)
+
     detections = detector.get_detections(img)
 
     face1 = img[detections[0][0][1]:detections[0][0][3], detections[0][0][0]:detections[0][0][2]]
     # img = detector.draw_frame(img, detections)
-    weight_bin = "models/MN3_antispoof.bin"
-    model_xml = "models/MN3_antispoof.xml"
-    spoof_detector = SpoofDetector(model_xml, weight_bin)
     prob = spoof_detector.get_detections(face1)
 
     print(prob.shape)
@@ -147,28 +157,4 @@ if __name__ == "__main__":
     
     cv2.imshow("img1", img)
     cv2.imshow("Face1", face1)
-
-    weight_bin = "intel/face-detection-adas-0001/FP32/face-detection-adas-0001.bin"
-    model_xml = "intel/face-detection-adas-0001/FP32/face-detection-adas-0001.xml"
-
-    img = cv2.imread("IMG_1411.jpg")
-    detector = FaceDetector(model_xml, weight_bin)
-    detections = detector.get_detections(img)
-
-    face1 = img[detections[0][0][1]:detections[0][0][3], detections[0][0][0]:detections[0][0][2]]
-    # img = detector.draw_frame(img, detections)
-    weight_bin = "models/MN3_antispoof.bin"
-    model_xml = "models/MN3_antispoof.xml"
-    spoof_detector = SpoofDetector(model_xml, weight_bin)
-    prob = spoof_detector.get_detections(face1)
-
-    real_prob = prob[0][0]
-    fake_prob = prob[0][1]
-
-    # Draw the probability on the image
-    cv2.putText(face1, "Real: " + str(round(real_prob, 2)) + "%", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1)
-    cv2.putText(face1, "Fake: " + str(round(fake_prob, 2)) + "%", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1)
-
-    cv2.imshow("img2", img)
-    cv2.imshow("Face2", face1)
     cv2.waitKey(0)

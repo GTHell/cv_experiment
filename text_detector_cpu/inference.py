@@ -85,12 +85,12 @@ class TextDetector:
         points = points.astype(int)
 
         warped, warped_rect = warp(points, original_image)
-        # cv2.imshow("warped", warped)
-        # cv2.imshow("original", original_image)
-        # cv2.imshow("resize", resized_image)
-        # cv2.waitKey(0)
-        # return
-        # exit()
+        cv2.imshow("warped", warped)
+        cv2.imshow("original", original_image)
+        cv2.imshow("resize", resized_image)
+        cv2.waitKey(0)
+        return
+        exit()
         
         for box in predictions:
             # Pick confidence factor from last place in array
@@ -148,6 +148,7 @@ class TextDetector:
         
         # resizing the input image to desired size
         resized_image = cv2.resize(img, (width, height))
+        resized_image = cv2.medianBlur(resized_image, 5)
         input_image = np.expand_dims(resized_image.transpose(2, 0, 1), 0)
         
         # inferene on the input imahe
