@@ -41,14 +41,56 @@ class TextDetector:
         link_logits = out["model/link_logits_/add"]
         segm_logits = out["model/segm_logits/add"]
 
-        link = link_logits[0, 0, :, :]
-        print(link_logits.shape)
-        print(segm_logits.shape)
+        self.decodeImageByJoin(segm_logits, link_logits, link_logits.shape)
         exit()
 
         detections = self.__decode_detections(detection_out, frame.shape)
 
         return detections
+    
+    def decodeImageByJoin(self, segm_data, link_data, link_data_shape, cls_conf_threshold=0.8, link_conf_threshold=0.8):
+        h = segm_data.shape[1]
+        w = segm_data.shape[2]
+
+        pixel_mask = np.zeros(h * w, dtype=np.uint8)
+        group_mask = {}
+        points = []
+
+        # need to refactor to numpy
+        for i in range(len(pixel_mask)):
+            pixel_mask[i] = segm_data[i] >= cls_conf_threshold
+            if pixel_mask[i]:
+                points.append((i % w, i // w))
+                group_mask[i] = -1
+        
+        # Refactor to numpy
+        # assign segm_data to pixel mask if it is greater than cls_conf_threshold
+        pixel_mask = np.where(segm_data >= cls_conf_threshold, 1, 0)
+        print(pixel_mask.shape)
+
+        link_mask = np.zeros(link_data.shape, dtype=np.uint8)
+        link_mask = np.where(link_data >= link_conf_threshold, 1, 0)
+        exit()
+
+        neighbours = link_data_shape[ov.layout.channels_idx(["NHWC"])]
+        for point in points:
+            neighbour = 0
+            for ny in range(point[1] - 1, point[1] + 2):
+                for nx in range(point[0] - 1, point[0] + 2):
+                    if nx == point[0] and ny == point[1]:
+                        continue
+
+                    if nx >= 0 and nx < w and ny >= 0 and ny < h:
+                        pixel_value = pixel_mask[ny * w + nx]
+                        link_value = link_mask[(point[1] * w + point[0]) * neighbours + neighbour]
+                        if pixel_value and link_value:
+                            join(point[0] + point[1] * w, nx + ny * w, group_mask)
+
+                    neighbour += 1
+
+        return get_all(points, w, h, group_mask)
+    def __post_processing(self, link_logits, segm_logits):
+        pass
 
     def __decode_detections(self, out, frame_shape):
         """Decodes raw SSD output"""
@@ -98,5 +140,6 @@ if __name__ == "__main__":
 
     # test
     img = cv2.imread("IMG_1411.jpg")
+    img = cv2.imread("ted_lasso.jpeg")
 
     detections = detector.get_detections(img)
