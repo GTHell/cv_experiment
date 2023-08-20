@@ -368,64 +368,13 @@ class TextDetector:
             connected, _ = cv2.findContours(pixel_pred.copy().astype(np.uint8)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
         
 
-        # connected = self.remove_small_boxes(connected, 100)
-        # connected = self.overlap_remove(connected, 0.2)
-        # cv2.imshow("pixel_pred", pixel_pred)
-        # cv2.imshow("link_boundary", link_boundary)
-        # cv2.waitKey(0)
-        # print(connected)
-        # print(connected.shape)
-        # exit()
-
-        ### Show visualization 
-        image = np.zeros([image_size[0], image_size[1], 3]).astype(np.uint8)
-        if len(connected) < 30000:
-
-            # if resize is not None:
-                # connected = resize['function'](resize['base_r'], resize['base_c'], list(connected), resize['original_image_shape'])
-
-            connected = self.remove_small_boxes(connected, 100)
-            connected = self.overlap_remove(connected,0.2)
-
-            for i in range(len(connected)):
-
-                color = (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
-                cv2.drawContours(image, [connected[i]], -1, color, cv2.FILLED)
-
-            if str(resize.dtype) == 'uint8':
-                images = resize
-            else:
-                print(resize.dtype)
-                images = (resize*255).astype(np.uint8)
-
-            images = images.copy()
-        
-            images = images.copy()
-            cv2.drawContours(images, connected, -1, (0, 255, 0), 1)
-            cv2.namedWindow("image", cv2.WINDOW_NORMAL)
-            cv2.imshow("image", image)
-            cv2.waitKey(0)
-
-            if use_link:
-                cv2.imwrite('results/boundary_train.png', link_boundary)
-                cv2.imwrite('results/link_train_UL.png', (link_predicted_8_channel[:, :, 0]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_U.png', (link_predicted_8_channel[:, :, 1]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_UR.png', (link_predicted_8_channel[:, :, 2]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_R.png', (link_predicted_8_channel[:, :, 3]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_BR.png', (link_predicted_8_channel[:, :, 4]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_B.png', (link_predicted_8_channel[:, :, 5]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_BL.png', (link_predicted_8_channel[:, :, 6]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
-                cv2.imwrite('results/link_train_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
-            # cv2.imwrite('results/segmentation_argmax_train.png', target)
-            # reshape segm_data from (1, 192, 320, 2) to (192, 320, 2)
-            segm_data = np.reshape(segm_data, (192, 320, 2))
-            cv2.imwrite('results/segmentation_continuous_train.png', (segm_data[:, :, 1]*255).astype(np.uint8))
-            print(connected.shape)
-
-            return connected
-
+        return connected
         ### End show
+
+        connected = self.remove_small_boxes(connected, 100)
+        connected = self.overlap_remove(connected, 0.2)
+
+        return connected
 
     def __decode_detections(self, out, frame_shape):
         """Decodes raw SSD output"""
