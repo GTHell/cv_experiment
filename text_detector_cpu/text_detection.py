@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from openvino.inference_engine import IECore
+import networkx as nx
 
 class TextDetector:
     
@@ -56,14 +57,12 @@ class TextDetector:
         print(segm_logits[0, 1, 1, :])
 
         self.__post_processing(link_logits, segm_logits, resize=resized_image)
-        exit()
 
-        self.decodeImageByJoin(segm_logits, link_logits, link_logits.shape)
-        exit()
+        # self.decodeImageByJoin(segm_logits, link_logits, link_logits.shape)
 
-        detections = self.__decode_detections(detection_out, frame.shape)
+        # detections = self.__decode_detections(detection_out, frame.shape)
 
-        return detections
+        return None
     
     def decodeImageByJoin(self, segm_data, link_data, link_data_shape, cls_conf_threshold=0.8, link_conf_threshold=0.8):
         h = segm_data.shape[1]
@@ -289,7 +288,7 @@ class TextDetector:
 
         return contour[np.where(to_remove == 0)[0]]
 
-    def __post_processing(self, link_data, segm_data, cls_conf_threshold=0.8, link_conf_threshold=0.8, resize=None):
+    def __post_processing(self, link_data, segm_data, cls_conf_threshold=0.8, link_conf_threshold=0.8, resize=None, use_link=True, real_target=None):
         min_area = 300
         min_height = 10
 
@@ -303,18 +302,29 @@ class TextDetector:
 
         segm_data = self.softmax(segm_data)
 
-
-        # Get text/non-text mask from segm_data
+        # Get text/non-text mask from segm_data from second channel
+        # This will mask out the non-text regions to 0 and text regions to 1
         pixel_pred = (segm_data[:, :, :, 1] > cls_conf_threshold).astype(np.float32)
-        print(pixel_pred.shape)
-        print(pixel_pred[0, :10, :10])
-        # Reshape to 2D
+
+        print("Shape:", pixel_pred.shape)
+
+        # Reshape from (1, 192, 320) to 2D
         pixel_pred = np.reshape(pixel_pred, (192, 320))
+
         cv2.imshow("pixel_pred", pixel_pred)
         cv2.waitKey(0)
-        print(pixel_pred.shape)
-        print(pixel_pred[:10, :10])
-        exit()
+
+        if use_link:
+            link_pred = np.reshape(link_data, (192, 320, 16))
+            link_pred = np.exp(link_pred)
+            link_predicted_8_channel = np.zeros([link_pred.shape[0], link_pred.shape[1], 8])	
+            for i in range(8):
+                
+                link_pred[:, :, 2*i:2*i+2] = link_pred[:, :, 2*i:2*i+2]/np.sum(link_pred[:, :, 2*i:2*i+2], axis=2)[:, :, None]
+                link_predicted_8_channel[:, :, i] = (link_pred[:, :, 2*i+1] > link_conf_threshold).astype(np.float32)
+
+                #For each in link_predicted_8_channel, there are 2 channels of link_pred, normalised mean given to all three
+                #If this is above threshold, then make the channel value 1, else 0
 
 
         # Initialization of some useful values
@@ -323,9 +333,51 @@ class TextDetector:
         target[:, :, 0] = pixel_pred*255
         target = target.astype(np.uint8)
 
-        connected, _ = cv2.findContours(pixel_pred.copy().astype(np.uint8)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+        if use_link:
+            # Initialization of Graph
+            moves = [(-1,-1),(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1)]
+            edges = np.zeros(link_predicted_8_channel.shape)
+            row, column = np.where(pixel_pred==1)
+            g = nx.Graph()
+            g.add_nodes_from(zip(row,column))
+            link_predicted_8_channel = link_predicted_8_channel*pixel_pred[:, :, None]
+            link_boundary = (np.any(link_predicted_8_channel==0, axis=2).astype(np.float32)*pixel_pred*255).astype(np.uint8)
 
-        ### Show 
+            # Processing to allow us to use nx.connected_components
+            pixel_pred = np.pad(pixel_pred, 1, 'constant', constant_values = 0)
+            for i in range(8):
+                x,y = moves[i]
+                edges[:,:,i] = link_predicted_8_channel[:,:,i]*pixel_pred[1+x:1+x+image_size[0], 1+y:1+y+image_size[1]]
+
+            for i in range(8):
+                row, column = np.where(edges[:,:,i]==1)
+                g_edges1 = list(zip(row,column))
+                g_edges2 = list(zip(row+moves[i][0],column+moves[i][1]))
+                g.add_edges_from(zip(g_edges1,g_edges2))
+
+            # Set of connected components
+
+            connected = list(nx.connected_components(g))
+
+            # Converting to fit the countour half of the program
+
+            for i in range(len(connected)):
+                connected[i] = np.flip(np.array(list(connected[i])).reshape([len(connected[i]), 1, 2]), axis=-1)
+        else:
+            # Get the contours from the pixel_pred mask without link_data
+            connected, _ = cv2.findContours(pixel_pred.copy().astype(np.uint8)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+        
+
+        # connected = self.remove_small_boxes(connected, 100)
+        # connected = self.overlap_remove(connected, 0.2)
+        # cv2.imshow("pixel_pred", pixel_pred)
+        # cv2.imshow("link_boundary", link_boundary)
+        # cv2.waitKey(0)
+        # print(connected)
+        # print(connected.shape)
+        # exit()
+
+        ### Show visualization 
         image = np.zeros([image_size[0], image_size[1], 3]).astype(np.uint8)
         if len(connected) < 30000:
 
@@ -334,98 +386,46 @@ class TextDetector:
 
             connected = self.remove_small_boxes(connected, 100)
             connected = self.overlap_remove(connected,0.2)
-            exit()
 
             for i in range(len(connected)):
 
                 color = (np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255))
                 cv2.drawContours(image, [connected[i]], -1, color, cv2.FILLED)
 
-            if str(data.dtype) == 'uint8':
-                images = data
+            if str(resize.dtype) == 'uint8':
+                images = resize
             else:
-                images = (data*255).astype(np.uint8)
+                print(resize.dtype)
+                images = (resize*255).astype(np.uint8)
+
+            images = images.copy()
         
-            if real_target is not None:
+            images = images.copy()
+            cv2.drawContours(images, connected, -1, (0, 255, 0), 1)
+            cv2.namedWindow("image", cv2.WINDOW_NORMAL)
+            cv2.imshow("image", image)
+            cv2.waitKey(0)
 
-                real_target = (real_target*255).astype(np.uint8)
-
-                contours, hierarchy = cv2.findContours(real_target.copy(),cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-
-                images = images.copy()
-                cv2.drawContours(images, contours, -1, (0, 255, 0), 1)
-                if len(connected)!=0:
-                    cv2.drawContours(images, connected, -1, (255, 0, 0), 1)
-
-            else:
-
-                images = images.copy()
-                cv2.drawContours(images, connected, -1, (0, 255, 0), 1)
-
-            plt.clf()
-            
-            if path == None:
-
-                if not os.path.exists(config['dir']['Exp']+'/Output_Train'):
-                    os.mkdir(config['dir']['Exp']+'/Output_Train')
-
-                plt.imsave(config['dir']['Exp']+'/Output_Train/contour_on_image_train.png', images)
-                plt.imsave(config['dir']['Exp']+'/Output_Train/contour_blank_train.png', image)
-
-                if config['link']:
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/boundary_train.png', link_boundary)
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_UL.png', (link_predicted_8_channel[:, :, 0]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_U.png', (link_predicted_8_channel[:, :, 1]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_UR.png', (link_predicted_8_channel[:, :, 2]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_R.png', (link_predicted_8_channel[:, :, 3]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_BR.png', (link_predicted_8_channel[:, :, 4]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_B.png', (link_predicted_8_channel[:, :, 5]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_BL.png', (link_predicted_8_channel[:, :, 6]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
-                    plt.imsave(config['dir']['Exp']+'/Output_Train/link_train_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
-                plt.imsave(config['dir']['Exp']+'/Output_Train/segmentation_argmax_train.png', target)
-                plt.imsave(config['dir']['Exp']+'/Output_Train/segmentation_continuous_train.png', (segmentation_predicted[:, :, 1]*255).astype(np.uint8))
-
-            else:
-                # plt.imsave(path+'.png', images)
-                if not os.path.exists(path):
-                    os.mkdir(path)
-
-
-                plt.imsave(path+'/contour_on_image.png', images)
-                plt.imsave(path+'/contour_blank.png', image)
-                if config['link']:
-                    plt.imsave(path+'/boundary.png', link_boundary)
-                    plt.imsave(path+'/link_UL.png', (link_predicted_8_channel[:, :, 0]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_U.png', (link_predicted_8_channel[:, :, 1]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_UR.png', (link_predicted_8_channel[:, :, 2]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_R.png', (link_predicted_8_channel[:, :, 3]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_BR.png', (link_predicted_8_channel[:, :, 4]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_B.png', (link_predicted_8_channel[:, :, 5]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_BL.png', (link_predicted_8_channel[:, :, 6]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
-                    plt.imsave(path+'/link_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
-                plt.imsave(path+'/segmentation_argmax.png', target)
-                plt.imsave(path+'/segmentation_continuous.png', (segmentation_predicted[:, :, 1]*255).astype(np.uint8))
+            if use_link:
+                cv2.imwrite('results/boundary_train.png', link_boundary)
+                cv2.imwrite('results/link_train_UL.png', (link_predicted_8_channel[:, :, 0]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_U.png', (link_predicted_8_channel[:, :, 1]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_UR.png', (link_predicted_8_channel[:, :, 2]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_R.png', (link_predicted_8_channel[:, :, 3]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_BR.png', (link_predicted_8_channel[:, :, 4]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_B.png', (link_predicted_8_channel[:, :, 5]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_BL.png', (link_predicted_8_channel[:, :, 6]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
+                cv2.imwrite('results/link_train_L.png', (link_predicted_8_channel[:, :, 7]*255).astype(np.uint8))
+            # cv2.imwrite('results/segmentation_argmax_train.png', target)
+            # reshape segm_data from (1, 192, 320, 2) to (192, 320, 2)
+            segm_data = np.reshape(segm_data, (192, 320, 2))
+            cv2.imwrite('results/segmentation_continuous_train.png', (segm_data[:, :, 1]*255).astype(np.uint8))
+            print(connected.shape)
 
             return connected
 
         ### End show
-
-
-        link_pred = np.exp(link_pred)
-        link_predicted_8_channel = np.zeros([link_pred.shape[0], link_pred.shape[1], 8])	
-
-        for i in range(8):
-            link_pred[:, :, 2*i:2*i+2] = link_pred[:, :, 2*i:2*i+2]/np.sum(link_pred[:, :, 2*i:2*i+2], axis=2)[:, :, None]
-            link_predicted_8_channel[:, :, i] = (link_pred[:, :, 2*i+1] > link_conf_threshold).astype(np.float32)
-
-            #For each in link_predicted_8_channel, there are 2 channels of link_pred, normalised mean given to all three
-            #If this is above threshold, then make the channel value 1, else 0
-
-        exit()
-
-        pass
 
     def __decode_detections(self, out, frame_shape):
         """Decodes raw SSD output"""
@@ -475,6 +475,22 @@ if __name__ == "__main__":
 
     # test
     img = cv2.imread("IMG_1411.jpg")
-    # img = cv2.imread("ted_lasso.jpeg")
+    print(img.shape)
+    # crop to center. the image size is H:4032, W:2268
+    # For larger image, the text detection is not working
+    # It's better to first crop the image to the center or use object detection to detect the text region
+    # Then resize resize to even smaller size to speed up the text detection
+    img = img[1500:2700, 400:1900, :]
+    img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
+    print(img.shape)
+    cv2.imshow('image', img)
+    cv2.waitKey(0)
 
+    # img = cv2.imread("ted_lasso.jpeg")
+    cv2.namedWindow("Original image", cv2.WINDOW_NORMAL)
+    cv2.imshow("Original image", img)
+
+    import time
+    t1 = time.time()
     detections = detector.get_detections(img)
+    print("Time:", time.time() - t1)
