@@ -3,7 +3,9 @@ import numpy as np
 from openvino.inference_engine import IECore
 import networkx as nx
 
-class TextDetector:
+from inference import warp
+
+class TextDetectorPixelLink:
     
     def load_ie_model(self, model_xml, weight_bin, device='CPU') -> None:
         """Loads a model in the Inference Engine format"""
@@ -29,8 +31,7 @@ class TextDetector:
     def get_detections(self, frame):
         """Returns all detections on frame"""
         b, h, w, c = self.network.input_info[self.input_layer].input_data.shape
-        print(h, w)
-        # out = self.net.forward(cv2.resize(frame, (w, h)))
+
         resized_image = cv2.resize(img, (w, h))
 
         # Transpose to NCHW (1, 3, H, W) = (0,1,2) + expand_dims
@@ -51,60 +52,61 @@ class TextDetector:
         # kClsOutput
         segm_logits = out["model/segm_logits/add"]
 
-        print(link_logits.shape)
-        print(segm_logits.shape)
-        print(segm_logits[0, 0, 0, :])
-        print(segm_logits[0, 1, 1, :])
+        # Post process to get contours of the text
+        # Contour can be obtained directly from segm_logits without link_logits
+        cnts = self.__post_processing(link_logits, segm_logits, resize=resized_image)
 
-        self.__post_processing(link_logits, segm_logits, resize=resized_image)
+        # Extract the text region from the frame
+        cnts = self.__extract_text_region(frame, cnts)
 
-        # self.decodeImageByJoin(segm_logits, link_logits, link_logits.shape)
-
-        # detections = self.__decode_detections(detection_out, frame.shape)
-
-        return None
+        return cnts
     
-    def decodeImageByJoin(self, segm_data, link_data, link_data_shape, cls_conf_threshold=0.8, link_conf_threshold=0.8):
-        h = segm_data.shape[1]
-        w = segm_data.shape[2]
+    def __extract_text_region(self, frame, cnts):
 
-        pixel_mask = np.zeros(h * w, dtype=np.uint8)
-        group_mask = {}
-        points = []
+        # Construct input shape of 320 by 192
+        input_image = np.zeros([192, 320, 3], dtype=np.uint8)
 
-        # need to refactor to numpy
-        for i in range(len(pixel_mask)):
-            pixel_mask[i] = segm_data[i] >= cls_conf_threshold
-            if pixel_mask[i]:
-                points.append((i % w, i // w))
-                group_mask[i] = -1
+
+        (real_y, real_x), (resized_y, resized_x) = frame.shape[:2], input_image.shape[:2]
+        ratio_x, ratio_y = real_x / resized_x, real_y / resized_y
+
+        # TODO: Extract the text region from the frame
+        # Use the cnts to extract the text region
+
+        # Reshape cnts from (N, 4, 1, 2) to (N, 4, 2)
+        cnts = cnts.reshape([cnts.shape[0], 4, 2])
+
+        # Scale the cnts back to the original size
+        cnts = cnts * np.array([ratio_x, ratio_y])
+        cnts = cnts.astype(np.int64)
+
+        return cnts
+    
+    def test(self, frame, cnts):
+        warped, bounding_rects = warp(cnts, frame, b_padding=100)
+
+        bounding_rects = np.array(bounding_rects)
+        for rect in bounding_rects:
+            x, y, w, h = rect
+            cv2.rectangle(warped, (x, y), (x + w, y + h), (255, 0, 0), 1)
+
+        rotated_bounding_boxes = np.zeros([cnts.shape[0], 4, 2], dtype=np.int64)
+        print(rotated_bounding_boxes.shape)
+
+        for cnt in cnts:
+            cv2.drawContours(frame, [cnt], -1, (0, 255, 0), 2)
+
+            # Get the rotated bounding box
+            rect = cv2.minAreaRect(cnt)
+            box = cv2.boxPoints(rect)
+             
+            # convert all coordinates floating point values to int
+            box = np.int0(box)
+            cv2.drawContours(frame, [box], 0, (0, 0, 255), 2)
         
-        # Refactor to numpy
-        # assign segm_data to pixel mask if it is greater than cls_conf_threshold
-        pixel_mask = np.where(segm_data >= cls_conf_threshold, 1, 0)
-        print(pixel_mask.shape)
-
-        link_mask = np.zeros(link_data.shape, dtype=np.uint8)
-        link_mask = np.where(link_data >= link_conf_threshold, 1, 0)
-        exit()
-
-        neighbours = link_data_shape[ov.layout.channels_idx(["NHWC"])]
-        for point in points:
-            neighbour = 0
-            for ny in range(point[1] - 1, point[1] + 2):
-                for nx in range(point[0] - 1, point[0] + 2):
-                    if nx == point[0] and ny == point[1]:
-                        continue
-
-                    if nx >= 0 and nx < w and ny >= 0 and ny < h:
-                        pixel_value = pixel_mask[ny * w + nx]
-                        link_value = link_mask[(point[1] * w + point[0]) * neighbours + neighbour]
-                        if pixel_value and link_value:
-                            join(point[0] + point[1] * w, nx + ny * w, group_mask)
-
-                    neighbour += 1
-
-        return get_all(points, w, h, group_mask)
+        cv2.imshow("image", frame)
+        cv2.imshow("warped", warped)
+        cv2.waitKey(0)
     
     def softmax(self, x, axis=-1):
         e_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
@@ -120,22 +122,6 @@ class TextDetector:
             rdata[i:i+last_dim] = rdata[i:i+last_dim] / s
             
         return rdata
-    
-    def slice_and_get_second_channel(self, data):
-
-        link_pred = np.exp(link_pred)
-        link_predicted_8_channel = np.zeros([link_pred.shape[0], link_pred.shape[1], 8])	
-
-        for i in range(8):
-            
-            link_pred[:, :, 2*i:2*i+2] = link_pred[:, :, 2*i:2*i+2]/np.sum(link_pred[:, :, 2*i:2*i+2], axis=2)[:, :, None]
-            link_predicted_8_channel[:, :, i] = (link_pred[:, :, 2*i+1] > config['metadata'][d_name]['link_thresh']).astype(np.float32)
-
-            #For each in link_predicted_8_channel, there are 2 channels of link_pred, normalised mean given to all three
-            #If this is above threshold, then make the channel value 1, else 0
-
-
-        return out
 
     def line(self, p1, p2):
 
@@ -288,8 +274,8 @@ class TextDetector:
 
         return contour[np.where(to_remove == 0)[0]]
 
-    def __post_processing(self, link_data, segm_data, cls_conf_threshold=0.8, link_conf_threshold=0.8, resize=None, use_link=True, real_target=None):
-        min_area = 300
+    def __post_processing(self, link_data, segm_data, cls_conf_threshold=0.8, link_conf_threshold=0.8, resize=None, use_link=False, real_target=None):
+        min_area = 50
         min_height = 10
 
         # Compute softmax on the last dimension of the link_data
@@ -311,13 +297,11 @@ class TextDetector:
         # Reshape from (1, 192, 320) to 2D
         pixel_pred = np.reshape(pixel_pred, (192, 320))
 
-        cv2.imshow("pixel_pred", pixel_pred)
-        cv2.waitKey(0)
-
         if use_link:
             link_pred = np.reshape(link_data, (192, 320, 16))
             link_pred = np.exp(link_pred)
             link_predicted_8_channel = np.zeros([link_pred.shape[0], link_pred.shape[1], 8])	
+
             for i in range(8):
                 
                 link_pred[:, :, 2*i:2*i+2] = link_pred[:, :, 2*i:2*i+2]/np.sum(link_pred[:, :, 2*i:2*i+2], axis=2)[:, :, None]
@@ -333,6 +317,7 @@ class TextDetector:
         target[:, :, 0] = pixel_pred*255
         target = target.astype(np.uint8)
 
+        # Get the contours
         if use_link:
             # Initialization of Graph
             moves = [(-1,-1),(-1,0),(-1,1),(0,1),(1,1),(1,0),(1,-1),(0,-1)]
@@ -368,10 +353,7 @@ class TextDetector:
             connected, _ = cv2.findContours(pixel_pred.copy().astype(np.uint8)*255,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
         
 
-        return connected
-        ### End show
-
-        connected = self.remove_small_boxes(connected, 100)
+        connected = self.remove_small_boxes(connected,min_area=min_area)
         connected = self.overlap_remove(connected, 0.2)
 
         return connected
@@ -417,29 +399,32 @@ class TextDetector:
 if __name__ == "__main__":
 
     # Init the detector
-    weight_bin = "intel/text-detection-0003/FP16/text-detection-0003.bin"
-    model_xml = "intel/text-detection-0003/FP16/text-detection-0003.xml"
+    weight_bin = "intel/text-detection-0003/FP32/text-detection-0003.bin"
+    model_xml = "intel/text-detection-0003/FP32/text-detection-0003.xml"
 
-    detector = TextDetector(model_xml, weight_bin)
+    detector = TextDetectorPixelLink(model_xml, weight_bin)
 
     # test
     img = cv2.imread("IMG_1411.jpg")
-    print(img.shape)
     # crop to center. the image size is H:4032, W:2268
     # For larger image, the text detection is not working
     # It's better to first crop the image to the center or use object detection to detect the text region
     # Then resize resize to even smaller size to speed up the text detection
+
     img = img[1500:2700, 400:1900, :]
     img = cv2.resize(img, (0, 0), fx=0.5, fy=0.5)
-    print(img.shape)
-    cv2.imshow('image', img)
-    cv2.waitKey(0)
+    # print(img.shape)
+    # cv2.imshow('image', img)
+    # cv2.waitKey(0)
 
     # img = cv2.imread("ted_lasso.jpeg")
-    cv2.namedWindow("Original image", cv2.WINDOW_NORMAL)
-    cv2.imshow("Original image", img)
+    # cv2.namedWindow("Original image", cv2.WINDOW_NORMAL)
+    # cv2.imshow("Original image", img)
 
     import time
     t1 = time.time()
     detections = detector.get_detections(img)
+
+    # Test
     print("Time:", time.time() - t1)
+    detector.test(img, detections)

@@ -251,12 +251,13 @@ def warp(text_boxes, image, new_width=1000, new_height=600, b_padding=0, debug=F
     """
     find convex of the text detection then transform its image and text location
     -------------------------
-    text_boxes: text detection text boxes
+    text_boxes: text detection text boxes, (n, 4, 2)
     image: origin cropped image
     -------------------------
     return: warped_image, new_bounding_rect
 
     """
+
     # Reshape to 2 dimension
     boxes = np.flip(text_boxes.reshape((-1, 2)), 0)
 
